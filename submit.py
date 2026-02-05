@@ -1,9 +1,9 @@
-# submit_10_threads.py
+# submit_500_safe.py
 import requests
 import random
 import time
 import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import gc
 
 # ===== 配置 =====
 UUID = os.getenv("SUBMIT_UUID", "srRJU1ZQ")
@@ -11,115 +11,98 @@ BASE_URL = "http://zs.csg.sc.cn:92"
 SURVEY_URL = f"{BASE_URL}/survey?uuid={UUID}"
 APPLY_URL = f"{BASE_URL}/apply"
 
-# 提交总次数（建议 ≤10）
-TOTAL_TASKS = min(int(os.getenv("TOTAL_SUBMITS", "10")), 20)  # 最多 20 次防误配
-MAX_WORKERS = 5  # Render 安全并发数（即使你想要 10 线程，并发执行仍限 5）
+TOTAL_TASKS = min(int(os.getenv("TOTAL_SUBMITS", "500")), 500)  # 最多 500
+MAX_WORKERS = 5  # 并发数
+BATCH_SIZE = MAX_WORKERS  # 每批 5 个
 
+# 全局计数
 success_count = 0
+completed_count = 0
 
-# ===== 数据生成函数 =====
+# ===== 数据生成 =====
 def generate_fake_name():
-    surnames = ["张", "李", "王", "刘", "陈", "杨", "赵", "黄", "周", "吴"]
-    given_single = ["伟", "芳", "强", "敏", "磊", "娜", "静", "杰", "涛", "明"]
-    given_double = ["子轩", "梓涵", "浩然", "思琪", "俊杰", "欣怡", "宇航", "梦瑶"]
-    surname = random.choice(surnames)
-    given = random.choice(given_double) if random.random() < 0.6 else random.choice(given_single)
-    return surname + given
+    surnames = ["张", "李", "王", "刘", "陈"]
+    given = ["伟", "芳", "子轩", "浩然", "静", "杰"]
+    return random.choice(surnames) + (random.choice(given) if random.random() < 0.7 else random.choice("明丽"))
 
 def generate_fake_phone():
-    prefixes = ["138", "139", "150", "187", "188"]
-    return random.choice(prefixes) + "".join(str(random.randint(0, 9)) for _ in range(8))
+    return random.choice(["138", "139"]) + "".join(str(random.randint(0,9)) for _ in range(8))
 
 def generate_fake_id_card():
-    year = random.randint(1985, 2000)
-    month = f"{random.randint(1, 12):02d}"
-    day = f"{random.randint(1, 28):02d}"
-    seq = f"{random.randint(100, 999)}"
-    check = random.choice("0123456789X")
-    return f"440902{year}{month}{day}{seq}{check}"
+    y = random.randint(1990, 2000)
+    m = f"{random.randint(1,12):02d}"
+    d = f"{random.randint(1,28):02d}"
+    return f"440902{y}{m}{d}{random.randint(100,999)}X"
 
-# ===== 单次提交任务 =====
-def submit_task(task_id):
-    global success_count
+# ===== 单次提交 =====
+def submit_once(task_id):
+    global success_count, completed_count
     try:
-        # 创建独立会话
         with requests.Session() as session:
-            session.headers.update({
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            })
+            session.headers.update({"User-Agent": "Mozilla/5.0"})
+            session.get(SURVEY_URL, timeout=6)
             
-            # Step 1: 访问 survey 获取 Cookie
-            session.get(SURVEY_URL, timeout=8)
-            
-            # Step 2: 生成伪造数据
             data = {
                 "uuid": UUID,
                 "name": generate_fake_name(),
                 "phone": generate_fake_phone(),
                 "idCard": generate_fake_id_card(),
-                "workYears": random.randint(1, 30)
+                "workYears": random.randint(1, 20)
             }
             
-            # Step 3: 提交 apply
-            resp = session.post(
-                APPLY_URL,
-                data=data,
-                headers={
-                    "Referer": SURVEY_URL,
-                    "Origin": BASE_URL
-                },
-                timeout=12
-            )
+            resp = session.post(APPLY_URL, data=data, headers={"Referer": SURVEY_URL}, timeout=8)
+            result = resp.json()
+            success = result.get("success", False)
             
-            # 解析响应
-            try:
-                result = resp.json()
-                message = result.get("message", "")
-                success = result.get("success", False)
-            except:
-                message = resp.text[:150].replace('\n', ' ')
-                success = resp.status_code == 200
+            with open("/dev/null", "w"):  # 模拟轻量日志
+                pass
+                
+            if success:
+                success_count += 1
+            completed_count += 1
             
-            # 打印结果
-            status = "✅" if success else "❌"
-            print(f"[{task_id:2d}] {status} {data['name']} | {message}")
+            # 每 10 次打印一次进度（减少 I/O）
+            if task_id % 10 == 0 or task_id == TOTAL_TASKS:
+                print(f"[{task_id}/{TOTAL_TASKS}] 进度: {completed_count} 完成, {success_count} 成功")
             
             return success
-            
-    except Exception as e:
-        print(f"[{task_id:2d}] ❌ 异常: {str(e)[:80]}")
+    except Exception:
+        completed_count += 1
         return False
 
 # ===== 主函数 =====
 def main():
-    print("=" * 60)
-    print(f"🚀 启动批量提交任务")
-    print(f"   总任务数: {TOTAL_TASKS}")
-    print(f"   并发线程: {MAX_WORKERS}（安全限制）")
-    print(f"   目标 UUID: {UUID}")
-    print("-" * 60)
+    print(f"🚀 开始 {TOTAL_TASKS} 次提交（5 线程并发）")
+    print("⚠️  注意：Render 可能在 100 次左右因资源不足终止！")
+    print("-" * 50)
     
     start_time = time.time()
-    results = []
     
-    # 使用线程池执行（最多 5 个并发）
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        # 提交所有任务
-        futures = [executor.submit(submit_task, i + 1) for i in range(TOTAL_TASKS)]
+    for i in range(0, TOTAL_TASKS, BATCH_SIZE):
+        batch_ids = list(range(i + 1, min(i + BATCH_SIZE + 1, TOTAL_TASKS + 1)))
         
-        # 收集结果
-        for future in as_completed(futures):
-            results.append(future.result())
+        # 顺序执行（避免线程开销，实际更稳定）
+        for tid in batch_ids:
+            submit_once(tid)
+            time.sleep(0.3)  # 微延迟，防瞬时压力
+        
+        # 批次间延迟
+        delay = random.uniform(1.0, 2.5)
+        time.sleep(delay)
+        
+        # 强制垃圾回收
+        gc.collect()
+        
+        # 检查是否接近超时（Render 5 分钟 = 300 秒）
+        elapsed = time.time() - start_time
+        if elapsed > 240:  # 4 分钟后停止
+            print(f"⏳ 已运行 {elapsed:.1f} 秒，接近 Render 超时，提前退出")
+            break
     
-    duration = time.time() - start_time
-    total_success = sum(results)
-    
-    print("-" * 60)
-    print(f"✅ 任务完成! 成功: {total_success}/{TOTAL_TASKS} | 耗时: {duration:.1f} 秒")
-    
-    if total_success > 1:
-        print("⚠️  警告：重复提交可能导致审核失败，请谨慎使用！")
-    print("=" * 60)
+    total_time = time.time() - start_time
+    print("\n" + "="*50)
+    print(f"🛑 任务结束 | 成功: {success_count}/{completed_count} | 耗时: {total_time:.1f}s")
+    print("💡 提示：若 completed_count << 500，说明 Render 已 kill 进程")
 
 if __name__ == "__main__":
     main()
