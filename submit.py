@@ -6,12 +6,12 @@ import json
 import os
 
 # ===== 配置 =====
-UUID = os.getenv("SUBMIT_UUID", "srRJU1ZQ")  # 在 Render 后台设置环境变量 SUBMIT_UUID
+UUID = os.getenv("SUBMIT_UUID", "srRJU1ZQ")  # 建议在 Render 后台设置 SUBMIT_UUID
 BASE_URL = "http://zs.csg.sc.cn:92"
 SURVEY_URL = f"{BASE_URL}/survey?uuid={UUID}"
 APPLY_URL = f"{BASE_URL}/apply"
 
-# ===== 生成多样化中文姓名 =====
+# ===== 生成多样化中文姓名（含三字、复姓）=====
 def generate_fake_name():
     single_surnames = [
         "张", "李", "王", "刘", "陈", "杨", "赵", "黄", "周", "吴",
@@ -35,18 +35,8 @@ def generate_fake_name():
         "星辰", "若曦", "景辰", "依诺", "书桓", "安然", "睿哲", "瑾萱"
     ]
     
-    # 90% 单姓，10% 复姓
-    if random.random() < 0.9:
-        surname = random.choice(single_surnames)
-    else:
-        surname = random.choice(compound_surnames)
-    
-    # 60% 双字名，40% 单字名
-    if random.random() < 0.6:
-        given = random.choice(given_names_double)
-    else:
-        given = random.choice(given_names_single)
-    
+    surname = random.choice(single_surnames) if random.random() < 0.9 else random.choice(compound_surnames)
+    given = random.choice(given_names_double) if random.random() < 0.6 else random.choice(given_names_single)
     return surname + given
 
 # ===== 生成手机号 =====
@@ -55,7 +45,7 @@ def generate_fake_phone():
     suffix = "".join(str(random.randint(0, 9)) for _ in range(8))
     return random.choice(prefixes) + suffix
 
-# ===== 生成身份证号（格式合法，内容伪造）=====
+# ===== 生成伪造身份证号 =====
 def generate_fake_id_card():
     year = random.randint(1980, 2005)
     month = f"{random.randint(1, 12):02d}"
@@ -68,8 +58,8 @@ def generate_fake_id_card():
 def main():
     print("=" * 60)
     print("🚀 开始执行自动提交任务...")
-    
-    # 生成数据
+
+    # 生成完整伪造数据
     data = {
         "uuid": UUID,
         "name": generate_fake_name(),
@@ -78,26 +68,22 @@ def main():
         "workYears": random.randint(0, 30)
     }
 
-    # 脱敏显示
-    safe_phone = data["phone"][:3] + "****" + data["phone"][-4:]
-    safe_id = data["idCard"][:6] + "********" + data["idCard"][-4:]
-
-    print("📤 即将提交的数据（脱敏保护）:")
+    # 直接打印原始数据（无脱敏）
+    print("📤 提交的原始数据:")
     print(f"   UUID       : {data['uuid']}")
     print(f"   姓名       : {data['name']}")
-    print(f"   手机号     : {safe_phone}")
-    print(f"   身份证     : {safe_id}")
+    print(f"   手机号     : {data['phone']}")
+    print(f"   身份证号   : {data['idCard']}")
     print(f"   工作年限   : {data['workYears']} 年")
     print("-" * 60)
 
-    # 创建会话
     session = requests.Session()
     session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     })
 
     try:
-        # Step 1: 访问 survey 页面获取 Cookie
+        # Step 1: 访问 survey 页面获取会话 Cookie
         print("🔄 正在访问 survey 页面以初始化会话...")
         session.get(SURVEY_URL, timeout=10)
         print("✅ 会话初始化成功")
@@ -115,17 +101,17 @@ def main():
         )
         print(f"✅ HTTP 状态码: {resp.status_code}")
 
-        # Step 3: 解析响应（自动显示中文）
+        # Step 3: 解析并美化响应（自动显示中文）
         try:
             resp_json = resp.json()
             print("📄 服务器响应（已解码中文）:")
             print(json.dumps(resp_json, ensure_ascii=False, indent=2))
         except ValueError:
             preview = resp.text[:300].replace('\n', ' ').strip()
-            print(f"📄 非 JSON 响应预览: {preview}")
+            print(f"📄 原始响应预览: {preview}")
 
     except Exception as e:
-        print(f"❌ 提交过程中发生错误: {e}")
+        print(f"❌ 提交失败: {e}")
         sys.exit(1)  # 非零退出 → Render 标记为失败
 
     print("=" * 60)
